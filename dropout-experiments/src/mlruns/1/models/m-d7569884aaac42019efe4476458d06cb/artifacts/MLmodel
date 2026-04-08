@@ -1,0 +1,23 @@
+artifact_path: /home/sranganath/Desktop/Ml-DevOPS/dropout-experiments/src/mlruns/1/models/m-d7569884aaac42019efe4476458d06cb/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.13.9
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.7.2
+    skops_trusted_types: null
+mlflow_version: 3.11.1
+model_id: m-d7569884aaac42019efe4476458d06cb
+model_size_bytes: 1193
+model_uuid: m-d7569884aaac42019efe4476458d06cb
+prompts: null
+run_id: 9d0658faa8ae48698ac3791523413cc8
+utc_time_created: '2026-04-08 01:06:04.378484'
