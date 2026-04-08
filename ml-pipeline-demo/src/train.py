@@ -1,108 +1,137 @@
-import pandas as pd
-import numpy as np
-import json
+import csv
 import os
 import sys
+import random
 import pickle
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-sys.path.insert(0, os.path.dirname(__file__))
-from preprocessing import validate_dataframe, clean_data, encode_categoricals, check_data_quality
-CONFIG = {
-    "data_url": "https://raw.githubusercontent.com/TripleTen-DS/Dataset/refs/heads/main/student_dropout_dataset.csv",
-    "target": "Dropout",
-    "test_size": 0.2,
-    "random_state": 42,
-    "n_estimators": 100,
-    "max_depth": 10,
-    "numeric_columns": [
-        "Age", "Family_Income", "Study_Hours_per_Day", "Attendance_Rate",
-        "Assignment_Delay_Days", "Travel_Time_Minutes", "Stress_Index",
-        "GPA", "Semester_GPA", "CGPA"
-    ],
-    "categorical_columns": [
-        "Gender", "Internet_Access", "Part_Time_Job", "Scholarship",
-        "Semester", "Department", "Parental_Education"
-    ],
-    "min_accuracy": 0.35,
-    "min_f1": 0.30,
-}
+import json
+import yaml
+import mlflow
 
-def load_data(url):
-    print(f"Loading data from {url}...")
-    df = pd.read_csv(url)
-    print(f"Loaded {len(df)} rows, {len(df.columns)} columns")
-    return df
+from evaluate import evaluate
 
-def train_model(config=None):
-    if config is None:
-        config = CONFIG
-    df = load_data(config["data_url"])
-    if "Student_ID" in df.columns:
-        df = df.drop(columns=["Student_ID"])
-    required = config["numeric_columns"] + config["categorical_columns"] + [config["target"]]
-    validate_dataframe(df, required, config["target"])
-    quality = check_data_quality(df, config["numeric_columns"])
-    print(f"Data quality: {quality['total_nulls']} nulls, {quality['duplicate_rows']} duplicates")
-    df = clean_data(df, config["numeric_columns"], config["categorical_columns"])
-    df = encode_categoricals(df, config["categorical_columns"])
-    X = df.drop(columns=[config["target"]])
-    y = df[config["target"]]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y,
-        test_size=config["test_size"],
-        random_state=config["random_state"],
-        stratify=y
-    )
-    print(f"Train: {len(X_train)} rows, Test: {len(X_test)} rows")
-    print("Training random forest...")
-    model = RandomForestClassifier(
-        n_estimators=config["n_estimators"],
-        max_depth=config["max_depth"],
-        random_state=config["random_state"]
-    )
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    metrics = {
-        "accuracy": round(accuracy_score(y_test, y_pred), 4),
-        "precision": round(precision_score(y_test, y_pred), 4),
-        "recall": round(recall_score(y_test, y_pred), 4),
-        "f1_score": round(f1_score(y_test, y_pred), 4),
-        "train_size": len(X_train),
-        "test_size": len(X_test),
-        "n_features": X_train.shape[1],
+
+def load_config(path="configs/config.yaml"):
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
+
+def load_data(path):
+    """Load CSV data and return features and labels."""
+    rows = []
+    with open(path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+    return rows
+
+
+def simple_train_test_split(rows, test_ratio=0.2, seed=42):
+    """Split data into train and test sets."""
+    rows = rows.copy()
+    random.seed(seed)
+    random.shuffle(rows)
+    split_idx = int(len(rows) * (1 - test_ratio))
+    return rows[:split_idx], rows[split_idx:]
+
+
+def train_simple_model(train_rows, charge_threshold=80.0):
+    """
+    Train a simple rule-based model.
+    """
+    churn_rates = {}
+    for contract_type in ["month-to-month", "one-year", "two-year"]:
+        matching = [r for r in train_rows if r["contract_type"] == contract_type]
+        if matching:
+            churned = sum(1 for r in matching if r["churned"] == "1")
+            churn_rates[contract_type] = churned / len(matching)
+        else:
+            churn_rates[contract_type] = 0.5
+
+    churned_tenure = [int(r["tenure_months"]) for r in train_rows if r["churned"] == "1"]
+    avg_churned_tenure = sum(churned_tenure) / len(churned_tenure) if churned_tenure else 12
+
+    model = {
+        "churn_rates_by_contract": churn_rates,
+        "tenure_threshold": avg_churned_tenure,
+        "charge_threshold": charge_threshold,
     }
-    print(f"\nResults:")
-    print(f"  Accuracy:  {metrics['accuracy']}")
-    print(f"  Precision: {metrics['precision']}")
-    print(f"  Recall:    {metrics['recall']}")
-    print(f"  F1 Score:  {metrics['f1_score']}")
-    if metrics["accuracy"] < config["min_accuracy"]:
-        print(f"\nWARNING: Accuracy {metrics['accuracy']} is below threshold {config['min_accuracy']}")
-    if metrics["f1_score"] < config["min_f1"]:
-        print(f"\nWARNING: F1 {metrics['f1_score']} is below threshold {config['min_f1']}")
-    os.makedirs("models", exist_ok=True)
-    model_path = "models/model.pkl"
-    with open(model_path, "wb") as f:
-        pickle.dump(model, f)
-    print(f"\nModel saved to {model_path}")
-    os.makedirs("metrics", exist_ok=True)
-    metrics_path = "metrics/results.json"
-    with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Metrics saved to {metrics_path}")
-    return metrics
+    return model
+
+
+def predict(model, row, score_threshold=0.4):
+    """Predict churn for a single row."""
+    score = model["churn_rates_by_contract"].get(row["contract_type"], 0.5)
+    if int(row["tenure_months"]) < model["tenure_threshold"]:
+        score += 0.1
+    if float(row["monthly_charges"]) > model["charge_threshold"]:
+        score += 0.1
+    return 1 if score > score_threshold else 0
+
 
 if __name__ == "__main__":
-    metrics = train_model()
+    config = load_config()
 
-    # Exit with error if thresholds not met
-    if metrics["accuracy"] < CONFIG["min_accuracy"]:
-        print(f"\nFAILED: Accuracy below threshold")
-        sys.exit(1)
-    if metrics["f1_score"] < CONFIG["min_f1"]:
-        print(f"\nFAILED: F1 score below threshold")
-        sys.exit(1)
+    data_path = config["data"]["raw_data_path"]
+    test_ratio = config["training"]["test_ratio"]
+    random_seed = config["training"]["random_seed"]
+    charge_threshold = config["model"]["charge_threshold"]
+    score_threshold = config["model"]["score_threshold"]
+    min_accuracy = config["thresholds"]["min_accuracy"]
+    experiment_name = config["mlflow"]["experiment_name"]
 
-    print("\nAll thresholds passed!")
+    print(f"Loading data from {data_path}...")
+    rows = load_data(data_path)
+    print(f"Loaded {len(rows)} rows")
+
+    train_rows, test_rows = simple_train_test_split(
+        rows, test_ratio=test_ratio, seed=random_seed
+    )
+    print(f"Train: {len(train_rows)} rows, Test: {len(test_rows)} rows")
+
+    mlflow.set_experiment(experiment_name)
+
+    with mlflow.start_run():
+        mlflow.log_param("data_path", data_path)
+        mlflow.log_param("test_ratio", test_ratio)
+        mlflow.log_param("random_seed", random_seed)
+        mlflow.log_param("charge_threshold", charge_threshold)
+        mlflow.log_param("score_threshold", score_threshold)
+
+        print("Training model...")
+        model = train_simple_model(train_rows, charge_threshold=charge_threshold)
+
+        print("Evaluating...")
+        metrics = evaluate(
+            model,
+            test_rows,
+            lambda m, row: predict(m, row, score_threshold=score_threshold),
+        )
+        print(f"Accuracy:  {metrics['accuracy']}")
+        print(f"Precision: {metrics['precision']}")
+        print(f"Recall:    {metrics['recall']}")
+
+        mlflow.log_metric("accuracy", metrics["accuracy"])
+        mlflow.log_metric("precision", metrics["precision"])
+        mlflow.log_metric("recall", metrics["recall"])
+
+        os.makedirs("models", exist_ok=True)
+        model_path = "models/churn_model.pkl"
+        with open(model_path, "wb") as f:
+            pickle.dump(model, f)
+        print("Model saved to models/churn_model.pkl")
+
+        os.makedirs("metrics", exist_ok=True)
+        metrics_path = "metrics/results.json"
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print("Metrics saved to metrics/results.json")
+
+        mlflow.log_artifact(model_path)
+        mlflow.log_artifact(metrics_path)
+        mlflow.log_artifact("configs/config.yaml")
+
+        if metrics["accuracy"] < min_accuracy:
+            print(
+                f"ERROR: Accuracy {metrics['accuracy']} is below minimum threshold {min_accuracy}"
+            )
+            sys.exit(1)

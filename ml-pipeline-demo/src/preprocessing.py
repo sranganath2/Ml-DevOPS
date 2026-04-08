@@ -1,42 +1,76 @@
 import pandas as pd
 import numpy as np
 
-def validate_dataframe(df, required_columns, target_column):
-    missing = [col for col in required_columns if col not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-    if target_column not in df.columns:
-        raise ValueError(f"Target column '{target_column}' not found")
-    if len(df) == 0:
-        raise ValueError("Dataframe is empty")
-    return True
-
-def clean_data(df, numeric_columns, categorical_columns):
+def fill_missing_with_median(df, columns):
     df = df.copy()
-    for col in numeric_columns:
-        if col in df.columns:
-            df[col] = df[col].fillna(df[col].median())
-    for col in categorical_columns:
-        if col in df.columns:
-            mode_val = df[col].mode()
-            if len(mode_val) > 0:
-                df[col] = df[col].fillna(mode_val[0])
+    for col in columns:
+        if col not in df.columns:
+            raise ValueError(f"Column '{col}' not found in dataframe")
+        median_val = df[col].median()
+        df[col] = df[col].fillna(median_val)
     return df
 
-def encode_categoricals(df, columns):
+def normalize_column(df, column, method="min-max"):
     df = df.copy()
-    df = pd.get_dummies(df, columns=columns, drop_first=True, dtype=int)
+    if column not in df.columns:
+        raise ValueError(f"Column '{column}' not found in dataframe")
+    col_data = df[column]
+    if method == "min-max":
+        min_val = col_data.min()
+        max_val = col_data.max()
+        if min_val == max_val:
+            df[column] = 0.0
+        else:
+            df[column] = (col_data - min_val) / (max_val - min_val)
+    elif method == "z-score":
+        mean_val = col_data.mean()
+        std_val = col_data.std()
+        if std_val == 0:
+            df[column] = 0.0
+        else:
+            df[column] = (col_data - mean_val) / std_val
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'min-max' or 'z-score'")
     return df
 
-def check_data_quality(df, numeric_columns):
-    report = {
-        "total_rows": len(df),
-        "total_nulls": int(df.isnull().sum().sum()),
-        "null_percentage": round(df.isnull().sum().sum() / (len(df) * len(df.columns)) * 100, 2),
-        "duplicate_rows": int(df.duplicated().sum()),
-    }
-    for col in numeric_columns:
-        if col in df.columns:
-            report[f"{col}_min"] = float(df[col].min())
-            report[f"{col}_max"] = float(df[col].max())
-    return report
+def encode_binary_column(df, column, positive_value):
+    df = df.copy()
+    if column not in df.columns:
+        raise ValueError(f"Column '{column}' not found in dataframe")
+    unique_vals = df[column].dropna().unique()
+    if len(unique_vals) > 2:
+        raise ValueError(
+            f"Column '{column}' has {len(unique_vals)} unique values, expected 2"
+        )
+    df[column] = (df[column] == positive_value).astype(int)
+    return df
+
+def create_age_bins(df, column="age", bins=None, labels=None):
+    df = df.copy()
+    if column not in df.columns:
+        raise ValueError(f"Column '{column}' not found in dataframe")
+    if bins is None:
+        bins = [0, 18, 25, 35, 50, 65, 120]
+    if labels is None:
+        labels = ["under_18", "18-24", "25-34", "35-49", "50-64", "65+"]
+    df[f"{column}_bin"] = pd.cut(df[column], bins=bins, labels=labels, right=False)
+    return df
+
+def remove_outliers(df, column, method="iqr", threshold=1.5):
+    df = df.copy()
+    if column not in df.columns:
+        raise ValueError(f"Column '{column}' not found in dataframe")
+    if method == "iqr":
+        q1 = df[column].quantile(0.25)
+        q3 = df[column].quantile(0.75)
+        iqr = q3 - q1
+        lower = q1 - threshold * iqr
+        upper = q3 + threshold * iqr
+        df = df[(df[column] >= lower) & (df[column] <= upper)]
+    elif method == "zscore":
+        mean = df[column].mean()
+        std = df[column].std()
+        df = df[abs(df[column] - mean) <= threshold * std]
+    else:
+        raise ValueError(f"Unknown method: {method}")
+    return df
