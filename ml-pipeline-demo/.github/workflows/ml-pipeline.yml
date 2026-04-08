@@ -1,4 +1,5 @@
 name: ML Pipeline
+
 on:
   push:
     branches: [main]
@@ -72,4 +73,4 @@ jobs:
         run: dvc pull data/raw/customers.csv.dvc
 
       - name: Train model
-        run: PYTHONPATH=src python src/train.py         path: models/model.pkl
+        run: PYTHONPATH=src python src/train.py
