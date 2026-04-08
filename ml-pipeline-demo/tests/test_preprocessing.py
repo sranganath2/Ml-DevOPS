@@ -3,7 +3,16 @@ import numpy as np
 import pytest
 import sys
 sys.path.insert(0, "src")
-from preprocessing import fill_missing_with_median
+from preprocessing import fill_missing_with_median, normalize_column
+
+def test_normalize_column_min_max_scales_between_zero_and_one():
+    df = pd.DataFrame({
+        "age": [10.0, 20.0, 30.0]
+    })
+    result = normalize_column(df, "age", method="min-max")
+    assert result["age"].iloc[0] == 0.0
+    assert result["age"].iloc[1] == 0.5
+    assert result["age"].iloc[2] == 1.0
 
 def test_fill_missing_replaces_nulls():
     df = pd.DataFrame({

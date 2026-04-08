@@ -42,7 +42,7 @@ def check_drift(reference_path, current_path):
         check_result["status"] = "critical"
     elif share >= DRIFT_SHARE_WARNING:
         check_result["status"] = "warning"
-    return check_result
+    return check_result, my_eval
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     current_path = sys.argv[2]
     print(f"Checking drift: {current_path} vs {reference_path}")
     print("=" * 60)
-    result = check_drift(reference_path, current_path)
+    result, my_eval = check_drift(reference_path, current_path)
     print(
         f"Features drifted: {result['drifted_features']}/{result['total_features']} "
         f"({result['drift_share'] * 100:.1f}%)"
@@ -62,6 +62,8 @@ if __name__ == "__main__":
     if result["drifted_feature_names"]:
         print(f"\nDrifted features: {', '.join(result['drifted_feature_names'])}")
     os.makedirs("reports", exist_ok=True)
+    my_eval.save_html("reports/drift_report.html")
+    print("HTML report saved to reports/drift_report.html")
     with open("reports/drift_check_result.json", "w") as f:
         json.dump(result, f, indent=2)
     print("\nFull result saved to reports/drift_check_result.json")

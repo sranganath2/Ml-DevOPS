@@ -1,16 +1,12 @@
 data:
   raw_data_path: data/raw/customers.csv
-
 training:
   test_ratio: 0.2
   random_seed: 21
-
 model:
   charge_threshold: 75.0
   score_threshold: 0.38
-
 thresholds:
-  min_accuracy: 0.60
-
+  min_accuracy: 0.6
 mlflow:
   experiment_name: ml-pipeline-demo
